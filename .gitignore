@@ -5,3 +5,6 @@ videos
 _code.pbin
 code.pbin
 code.pbin.table
+
+nuitka-build
+pbin.exe

@@ -154,6 +154,8 @@ def pbin_patch_panorama():
         Patch panorama.dll
         Return codes:
             0 - no errors
+            1 - invalid panorama.dll
+            2 - file patched already
     """
 
     MD5_ORIGINAL = "cd469787211a122125faa44138263b62"
@@ -163,9 +165,13 @@ def pbin_patch_panorama():
 
     try:
         current_md5 = file_md5("../../bin/panorama.dll.bak")
-        if current_md5 == MD5_PATCHED:
-            print("Your panorama.dll patched already!")
-            return 0
+
+        if current_md5 == MD5_ORIGINAL:
+            pass
+        elif current_md5 == MD5_PATCHED:
+            return 2
+        else:
+            return 1
 
         with open("../../bin/panorama.dll.bak", "rb") as f:
             original = bytearray(f.read())
@@ -217,6 +223,9 @@ if __name__ == "__main__":
             match code:
                 case 1:
                     print("Invalid panorama.dll. Are you sure that you are using latest CS:GO build?")
+                case 2:
+                    print("Your panorama.dll patched already!")
+                    sys.exit(0)
 
             sys.exit(code)
 
