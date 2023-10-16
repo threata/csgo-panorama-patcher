@@ -5,6 +5,13 @@ import hashlib
 from shutil import make_archive, copyfile
 
 
+PANORAMA_DLL = {
+    # Legacy version of CS:GO
+    "cd469787211a122125faa44138263b62" : 1308935,
+    "41e8682aa02de3b7fe275dc1f2187439" : -1
+}
+
+
 def file_md5(fname):
     hash_md5 = hashlib.md5()
     with open(fname, "rb") as f:
@@ -52,22 +59,19 @@ def pbin_unpack(file_name: str):
             2 - invalid pbin file
     """
 
-    pbin = {
-        "signature": b"",
-        "rsa": b""
-    }
-
+    pbin = {}
     try:
         with open(file_name, "rb") as f:
-            # First of all, let's check PAN signature
             pbin["signature"]   = f.read(4)
             pbin["rsa"]         = f.read(512)
 
             file_table = {}
 
             if pbin["signature"] == b"\x50\x41\x4e\x02":
+                raw_header = b""
                 while True:
-                    pk = pk_header(f.read(30))
+                    raw_header = f.read(30)
+                    pk = pk_header(raw_header)
                     if pk["signature"] == b"\x50\x4b\x03\x04":
                         file = f.read(pk["filename_length"]).decode(encoding="utf-8")
 
@@ -81,9 +85,8 @@ def pbin_unpack(file_name: str):
                         file_table[file] = pk["uncomp_size"]
                     else:
                         break
-
+                file_table["__CODE_PBIN_END__"] = raw_header + f.read()
             else:
-                f.close()
                 sys.exit(2)
 
     except FileNotFoundError:
@@ -118,23 +121,29 @@ def pbin_pack():
         for file in files:
             file_name = os.path.join(root, file).replace("/", "\\")
             file_size = os.stat(file_name).st_size
+
+            if file_name not in file_table:
+                print(f"{file_name} : Unknown file")
+                continue
+
             file_original_size = file_table[file_name]
 
             output_file_content += b"\x50\x4B\x03\x04\x0A\x00\x00\x00\x00\x00\x00\x00\x00\x00\x82\xC2\xA9\x51"
-            output_file_content += file_table[file_name].to_bytes(4, byteorder="little")
-            output_file_content += file_table[file_name].to_bytes(4, byteorder="little")
+            output_file_content += file_original_size.to_bytes(4, byteorder="little")
+            output_file_content += file_original_size.to_bytes(4, byteorder="little")
             output_file_content += len(file_name).to_bytes(4, byteorder="little")
             output_file_content += file_name.encode("utf-8")
 
             with open(file_name, "rb") as f:
                 output_file_content += f.read()
                 if file_size > file_original_size:
-                    print(f"{file_name} : {file_size} B > {file_table[file_name]} B")
+                    print(f"{file_name} : {file_size} B > {file_original_size} B")
                     return 2
                 output_file_content += b'\x20' * (file_original_size - file_size)
 
-    with open("code.pbin.end", "rb") as f:
-        output_file_content += f.read()
+    if "__CODE_PBIN_END__" not in file_table:
+        return 1
+    output_file_content += file_table["__CODE_PBIN_END__"]
 
     while True:
         try:
@@ -156,34 +165,63 @@ def pbin_patch_panorama():
             0 - no errors
             1 - invalid panorama.dll
             2 - file patched already
+            3 - panorama.dll not found
+            4 - unknown error
     """
 
-    MD5_ORIGINAL = "cd469787211a122125faa44138263b62"
-    MD5_PATCHED  = "41e8682aa02de3b7fe275dc1f2187439"
-
-    copyfile("../../bin/panorama.dll", "../../bin/panorama.dll.bak")
+    panorama_file = "../../bin/panorama.dll"
+    panorama_backup = panorama_file + ".bak"
 
     try:
-        current_md5 = file_md5("../../bin/panorama.dll.bak")
+        if not os.path.isfile(panorama_file):
+            return 3
 
-        if current_md5 == MD5_ORIGINAL:
-            pass
-        elif current_md5 == MD5_PATCHED:
-            return 2
+        current_md5 = file_md5(panorama_file)
+
+        if current_md5 in PANORAMA_DLL:
+            if PANORAMA_DLL[current_md5] == -1:
+                return 2
         else:
             return 1
 
-        with open("../../bin/panorama.dll.bak", "rb") as f:
+        copyfile(panorama_file, panorama_backup)
+
+        with open(panorama_backup, "rb") as f:
             original = bytearray(f.read())
 
-        with open("../../bin/panorama.dll", "wb") as f:
-            modified = original[:1308935] + b'\xEB' + original[1308935+1:]
-            f.write(modified)
+        with open(panorama_file, "wb") as f:
+            pos = PANORAMA_DLL[current_md5]
+            f.write(original[:pos] + b'\xEB' + original[pos+1:])
     except:
-        print("Something bad happened! Idk what, just let me restore your panorama.dll?")
-        copyfile("../../bin/panorama.dll.bak", "../../bin/panorama.dll")
+        copyfile(panorama_backup, panorama_file)
+        return 4
 
     return 0
+
+
+def pbin_restore_panorama(force=False):
+    """
+        Restore panorama.dll
+        Return codes:
+            0 - no errors
+            1 - panorama.dll.bak not found
+            2 - invalid backup*
+
+        * - can be avoided with force=True
+    """
+
+    panorama_file = "../../bin/panorama.dll"
+    panorama_backup = panorama_file + ".bak"
+
+    if not os.path.isfile(panorama_backup):
+        return 1
+
+    bak_md5 = file_md5(panorama_backup)
+    if ((bak_md5 in PANORAMA_DLL) and (PANORAMA_DLL[bak_md5] != -1)) or force == True:
+        copyfile(panorama_backup, panorama_file)
+        return 0
+    else:
+        return 2
 
 
 if __name__ == "__main__":
@@ -222,10 +260,31 @@ if __name__ == "__main__":
 
             match code:
                 case 1:
-                    print("Invalid panorama.dll. Are you sure that you are using latest CS:GO build?")
+                    print("Invalid panorama.dll.")
+
                 case 2:
                     print("Your panorama.dll patched already!")
                     sys.exit(0)
+
+                case 3:
+                    print("panorama.dll not found!")
+
+                case 4:
+                    print("Unknown error, original panorama.dll restored.")
+
+            sys.exit(code)
+
+        elif sys.argv[1] == "restore_panorama":
+            code = pbin_restore_panorama()
+
+            match code:
+                case 1:
+                    print("panorama.dll.bak not found!")
+
+                case 2:
+                    print("The backup is incorrect. Are you sure you want to restore panorama.dll?")
+                    if input("(y/N): ").lower().startswith('y'):
+                        code = pbin_restore_panorama(force=True)
 
             sys.exit(code)
 
@@ -233,5 +292,6 @@ if __name__ == "__main__":
             print(f"Unknown function '{sys.argv[1]}'")
             sys.exit(1)
     else:
-        print(f"Usage: {sys.argv[0]} unpack/pack/patch_panorama")
+        print(f"Usage: {sys.argv[0]} unpack/pack/patch_panorama/restore_panorama")
         sys.exit(1)
+
